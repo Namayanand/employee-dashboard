@@ -5,6 +5,10 @@ repository contains the **framework-agnostic service layer** (data + logic).
 The UI is deliberately decoupled and plugs in on top — Streamlit, or a custom
 FastAPI + frontend — without touching any of this code.
 
+> **Live demo:** deployed on **Streamlit Community Cloud**, backed by a
+> **Supabase Postgres** database. _(Add your app URL here:
+> `https://<your-app>.streamlit.app`.)_
+
 It covers the four project requirements:
 
 | Requirement | Where it lives |
@@ -118,10 +122,12 @@ pagination at 100k–200k rows.
 only thing that changes between local dev and production is `DATABASE_URL`:
 
 - Dev: `sqlite:///./data/employees.db`
-- Prod (keeps SQLite semantics, hosted): Turso / libSQL
-- Prod (Postgres): Supabase or a managed instance
+- **Prod (this deployment): Supabase Postgres** —
+  `postgresql+psycopg2://…@…supabase.com:5432/postgres?sslmode=require`
+- Prod (alt, keeps SQLite semantics): Turso / libSQL
 
-No query or model code changes.
+No query or model code changes. The one dependency to add for Postgres is a
+driver — `psycopg2-binary` (see `requirements.txt`).
 
 **Fast loads.** Indexes are created *after* the bulk insert (`ingest.py`), so
 loading an unindexed table stays fast and the index is built once.
@@ -141,24 +147,48 @@ format**, writes one file per unique value, and can hand back a single zip.
 A safety limit (`MAX_SPLIT_GROUPS`, default 500) prevents accidentally splitting
 on a high-cardinality column like `emp_id`.
 
-## Deployment (optional)
+## Deployment
 
-Deployment isn't required by the brief — a clean local run plus this README is a
-complete submission. If you do host it:
+Live on **Streamlit Community Cloud** with the database on **Supabase Postgres**.
+The app container is stateless — all data lives in Supabase, so redeploys never
+lose anything (no ephemeral-SQLite trap).
 
-- **The trap:** Railway/most hosts have an *ephemeral filesystem*. A SQLite file
-  on the container disk is wiped on every redeploy. Either attach a **persistent
-  volume** for the `.db` file, or use a hosted DB (Turso / Supabase Postgres) via
-  `DATABASE_URL`.
-- Railway is no longer free for an always-on app + DB (≈$5/mo). For a genuinely
-  free hosted demo, run the app on a free tier and point `DATABASE_URL` at a free
-  managed database.
+### 1. Create the Supabase database
 
-## Roadmap
+1. Create a project at [supabase.com](https://supabase.com) and grab the
+   connection string from **Project Settings → Database → Connection string**.
+2. Streamlit Community Cloud is **IPv4-only**, while Supabase's *direct* host
+   (`db.<ref>.supabase.co:5432`) is IPv6-only — use the **Session pooler** host
+   instead (also port `5432`, IPv4-reachable). Format it for SQLAlchemy + psycopg2
+   and append `sslmode=require`:
 
-- [x] UI layer (Streamlit prototype in `app.py`, calling only `employee_service`)
-- [x] Charts/KPIs via SQL aggregates (`repository.summary` / `aggregate_count`)
-- [ ] Inline-edit grid (`st.data_editor`) as an alternative to the CRUD forms
-- [ ] Swap native charts for Plotly (nicer tooltips/interactivity)
-- [ ] PDF export as a 5th format (report-style)
-- [ ] Optional deploy with a persistent DB backend
+   ```
+   postgresql+psycopg2://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+   ```
+
+### 2. Seed it (one time, from your machine)
+
+Point local `DATABASE_URL` at Supabase and run the generator + seeder — schema
+creation and post-load indexing are handled by `ingest.py`:
+
+```bash
+export DATABASE_URL="postgresql+psycopg2://…:5432/postgres?sslmode=require"
+python scripts/generate_data.py -n 200000
+python scripts/seed_db.py
+```
+
+### 3. Deploy the app
+
+1. Ensure the Postgres driver is installed on the host — `psycopg2-binary` must be
+   present in `requirements.txt` (uncomment it if it isn't).
+2. Push to GitHub, then on [share.streamlit.io](https://share.streamlit.io) create
+   an app pointing at this repo with `app.py` as the entrypoint.
+3. In the app's **Settings → Secrets**, set `DATABASE_URL` (Streamlit exposes
+   secrets as environment variables, which `config.py` reads via `os.getenv`):
+
+   ```toml
+   DATABASE_URL = "postgresql+psycopg2://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require"
+   ```
+
+That's it — the app boots against Supabase, and `current_count()` gates the UI
+until the table is seeded.
