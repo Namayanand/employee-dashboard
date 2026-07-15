@@ -51,13 +51,14 @@ BS_ICONS = ["bar-chart-fill", "people-fill", "tools"]   # option_menu (expanded)
 EMOJI = {"Overview": "📊", "Employees": "👥", "Manage": "🛠"}  # buttons (collapsed)
 
 NAV_STYLES = {
-    "container": {"padding": "6px", "background-color": "#D9CCE6",
+    "container": {"padding": "6px", "background-color": "#F1F2F6",
                   "border-radius": "12px"},
     "nav-link": {"font-size": "15px", "padding": "10px 14px",
                  "border-radius": "8px", "--hover-color": "#9572B8"},
     "nav-link-selected": {"background-color": "#68458A", "color": "white"},
     "icon": {"font-size": "15px"},
 }
+
 
 # --------------------------------------------------------------------------- #
 # State helpers (a version counter invalidates cached reads after any write)
@@ -329,51 +330,6 @@ def _do_write(action, success_msg: str):
 # --------------------------------------------------------------------------- #
 # Left rail (custom, column-based, collapsible to icons)
 # --------------------------------------------------------------------------- #
-def render_nav() -> str:
-    """Draw the collapsible nav and return the selected page.
-
-    Collapsed -> icon-only buttons (option_menu can't hide its labels).
-    Expanded  -> option_menu. `nav_page` is the shared source of truth, so the
-    two stay in sync when you toggle collapse.
-    """
-    collapsed = st.session_state.get("nav_collapsed", False)
-    page = st.session_state.setdefault("nav_page", "Overview")
-
-    if st.button("»" if collapsed else "«", key="nav_toggle",
-                 use_container_width=True, help="Collapse / expand menu"):
-        st.session_state["nav_collapsed"] = not collapsed
-        st.rerun()
-
-    if collapsed:
-        for name in PAGES:
-            if st.button(EMOJI[name], key=f"navicon_{name}", use_container_width=True,
-                         type="primary" if page == name else "secondary", help=name):
-                st.session_state["nav_page"] = name
-                st.rerun()
-        return page
-
-    # Keying by the current page makes the menu re-mount on the right item after
-    # a collapsed-button selection, keeping both modes in sync.
-    selected = option_menu(
-        menu_title=None, options=PAGES, icons=BS_ICONS,
-        default_index=PAGES.index(page), key=f"nav_menu_{page}", styles=NAV_STYLES,
-    )
-    st.session_state["nav_page"] = selected
-    return selected
-def render_content(selected: str) -> None:
-    """Draw the control bar (where relevant) and the selected page."""
-    v = data_version()
-    if selected in ("Overview", "Employees"):
-        filters, search, sort_by, sort_dir, page_size = control_bar(
-            show_sort=(selected == "Employees"))
-        fkey = filters_key(filters)
-
-    if selected == "Overview":
-        page_overview(fkey, search, v)
-    elif selected == "Employees":
-        page_employees(filters, search, fkey, v, sort_by, sort_dir, page_size)
-    else:
-        page_manage(v)
 
 
 # --------------------------------------------------------------------------- #
@@ -391,11 +347,28 @@ def main():
 
     st.caption(f"{current_count():,} employees · {config.DATABASE_URL.split('/')[-1]}")
 
-    collapsed = st.session_state.setdefault("nav_collapsed", False)
-    rail_col, content_col = st.columns([0.9 if collapsed else 2.3, 10])
+    rail_col, content_col = st.columns([2.3, 10])
     with rail_col:
-        selected = render_nav()
+        selected = option_menu(
+            menu_title=None,
+            options=["Overview", "Employees", "Manage"],
+            icons=["bar-chart-fill", "people-fill", "tools"],  # Bootstrap Icons
+            default_index=0,
+            key="nav_menu",
+            styles=NAV_STYLES,
+        )
+
     with content_col:
-        render_content(selected)
+        v = data_version()
+        if selected in ("Overview", "Employees"):
+            filters, search, sort_by, sort_dir, page_size = control_bar(
+                show_sort=(selected == "Employees"))
+            fkey = filters_key(filters)
+        if selected == "Overview":
+            page_overview(fkey, search, v)
+        elif selected == "Employees":
+            page_employees(filters, search, fkey, v, sort_by, sort_dir, page_size)
+        else:
+            page_manage(v)
 if __name__ == "__main__":
     main()
