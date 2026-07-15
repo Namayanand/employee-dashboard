@@ -10,7 +10,7 @@ pyarrow>=15.0          # .parquet
 
 # --- optional production DB drivers (uncomment the one you deploy with) ---
 psycopg2-binary>=2.9    # Postgres  (Supabase / Railway managed PG)
-sqlalchemy-libsql>=0.1  # Turso / libSQL (keeps SQLite semantics, hosted)
+# sqlalchemy-libsql>=0.1  # Turso / libSQL (keeps SQLite semantics, hosted)
 
 # --- UI (prototype) ---
 streamlit>=1.40
