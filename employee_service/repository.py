@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import pandas as pd
-from sqlalchemy import asc, case, desc, func, or_, select
+from sqlalchemy import asc, case, desc, extract, func, or_, select
 from sqlalchemy.orm import Session
 
 from . import config
@@ -174,6 +174,21 @@ def aggregate_avg(
     if limit:
         stmt = stmt.limit(limit)
     return [(r[0], float(r[1] or 0.0)) for r in session.execute(stmt).all()]
+
+
+def joins_by_year(
+    session: Session,
+    *,
+    filters: Optional[dict] = None,
+    search: Optional[str] = None,
+) -> list[tuple[int, int]]:
+    """[(year, count), ...] — hires per year, aggregated in SQL so we never pull
+    the raw rows over the wire (portable: EXTRACT on Postgres, strftime on SQLite)."""
+    year = extract("year", Employee.date_of_joining)
+    stmt = _apply_filters(select(year.label("year"), func.count().label("n")),
+                          filters, search)
+    stmt = stmt.group_by(year).order_by(year)
+    return [(int(r[0]), int(r[1])) for r in session.execute(stmt).all()]
 
 
 def summary(
