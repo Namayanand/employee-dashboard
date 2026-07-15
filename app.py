@@ -39,6 +39,28 @@ st.markdown(
       [data-testid="stMetricValue"] {font-size:1.7rem;}
       /* rail buttons: a touch taller, rounded */
       div[data-testid="stButton"] > button {border-radius:10px;}
+
+      /* Keep the filter dropdown menu text crisp. BaseWeb renders the menu in a
+         portal on its own GPU layer; on fractional display scaling that layer
+         rasterises blurry. Demote the forced layer WITHOUT touching the inline
+         transform BaseWeb uses to position the menu (removing that would misplace it). */
+      [data-baseweb="popover"], [data-baseweb="menu"], ul[role="listbox"] {
+        will-change: auto !important;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* Skeleton loading placeholders (shimmer) */
+      .skeleton {
+        border-radius:12px;
+        background:linear-gradient(90deg,#ECEDF3 25%,#F6F7FB 37%,#ECEDF3 63%);
+        background-size:400% 100%;
+        animation:skeleton-shimmer 1.4s ease infinite;
+      }
+      @keyframes skeleton-shimmer {
+        0% {background-position:100% 0;}
+        100% {background-position:-100% 0;}
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -85,37 +107,30 @@ def options_for(column: str, _version: int) -> list:
         return repo.distinct_values(s, column)
 
 
-@st.cache_data(show_spinner=False)
-def get_summary(fkey: tuple, search: str, _version: int) -> dict:
-    with session_scope() as s:
-        return repo.summary(s, filters=dict(fkey), search=search or None)
+DONUT_FIELDS = ["status", "employment_type", "gender"]
 
 
 @st.cache_data(show_spinner=False)
-def get_counts(column: str, fkey: tuple, search: str, _version: int) -> pd.DataFrame:
+def get_overview_data(fkey: tuple, search: str, _version: int) -> dict:
+    """Every Overview query in a SINGLE database connection (was 8 separate
+    round-trips). All aggregation happens in SQL, so nothing pulls raw rows over
+    the wire — the joins-by-year trend is grouped in the DB, not in pandas."""
+    f, q = dict(fkey), search or None
     with session_scope() as s:
-        rows = repo.aggregate_count(s, column, filters=dict(fkey), search=search or None)
-    return pd.DataFrame(rows, columns=[column, "count"])
-
-
-@st.cache_data(show_spinner=False)
-def get_avg(column: str, value_col: str, fkey: tuple, search: str,
-            _version: int) -> pd.DataFrame:
-    with session_scope() as s:
-        rows = repo.aggregate_avg(s, column, value_col,
-                                  filters=dict(fkey), search=search or None)
-    return pd.DataFrame(rows, columns=[column, "avg"])
-
-
-@st.cache_data(show_spinner=False)
-def get_joins_by_year(fkey: tuple, search: str, _version: int) -> pd.DataFrame:
-    with session_scope() as s:
-        df = repo.query_dataframe(s, filters=dict(fkey), search=search or None,
-                                  columns=["date_of_joining"])
-    if df.empty:
-        return pd.DataFrame({"year": [], "count": []})
-    year = pd.to_datetime(df["date_of_joining"]).dt.year
-    return year.value_counts().sort_index().rename_axis("year").reset_index(name="count")
+        counts = {c: repo.aggregate_count(s, c, filters=f, search=q)
+                  for c in (*DONUT_FIELDS, "department", "location")}
+        data = {
+            "summary": repo.summary(s, filters=f, search=q),
+            "counts": {c: pd.DataFrame(rows, columns=[c, "count"])
+                       for c, rows in counts.items()},
+            "avg_salary": pd.DataFrame(
+                repo.aggregate_avg(s, "department", "salary", filters=f, search=q),
+                columns=["department", "avg"]),
+            "joins": pd.DataFrame(
+                repo.joins_by_year(s, filters=f, search=q),
+                columns=["year", "count"]),
+        }
+    return data
 
 
 def get_page(filters, search, sort_by, sort_dir, page, page_size):
@@ -226,8 +241,41 @@ def area_chart(df: pd.DataFrame):
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
+def _skeleton(height: int) -> None:
+    st.markdown(f"<div class='skeleton' style='height:{height}px'></div>",
+                unsafe_allow_html=True)
+
+
+def _overview_skeleton() -> None:
+    """Paint the page layout immediately so it feels instant while data loads."""
+    for slot in st.columns(4):
+        with slot:
+            _skeleton(120)
+    st.divider()
+    st.caption("Workforce composition")
+    for slot in st.columns(3):
+        with slot:
+            _skeleton(300)
+    for slot in st.columns(2):
+        with slot:
+            _skeleton(320)
+    _skeleton(300)
+
+
 def page_overview(fkey: tuple, search: str, v: int):
-    kpis = get_summary(fkey, search, v)
+    # Skeleton-first: the layout paints instantly, then the real charts replace
+    # it once the (single, SQL-aggregated) query returns.
+    body = st.empty()
+    with body.container():
+        _overview_skeleton()
+
+    data = get_overview_data(fkey, search, v)
+    with body.container():
+        _render_overview(data)
+
+
+def _render_overview(data: dict) -> None:
+    kpis = data["summary"]
     head = kpis["headcount"]
     active_pct = (kpis["active"] / head * 100) if head else 0.0
 
@@ -242,47 +290,43 @@ def page_overview(fkey: tuple, search: str, v: int):
         return
 
     st.divider()
+    counts = data["counts"]
 
     # Categorical composition — interactive donuts for low-cardinality fields.
     st.caption("Workforce composition")
-    donuts = [("status", "By status"),
-              ("employment_type", "By employment type"),
-              ("gender", "By gender")]
-    for col_slot, (field, title) in zip(st.columns(3), donuts):
+    titles = {"status": "By status", "employment_type": "By employment type",
+              "gender": "By gender"}
+    for col_slot, field in zip(st.columns(3), DONUT_FIELDS):
         with col_slot:
             with st.container(border=True):
-                st.caption(title)
-                st.plotly_chart(
-                    donut_chart(get_counts(field, fkey, search, v), field),
-                    use_container_width=True, key=f"donut_{field}")
+                st.caption(titles[field])
+                st.plotly_chart(donut_chart(counts[field], field),
+                                use_container_width=True, key=f"donut_{field}")
 
     # Headcount breakdowns — ranked horizontal bars.
     left, right = st.columns(2)
     with left:
         st.caption("Headcount by department")
         with st.container(border=True):
-            st.plotly_chart(
-                hbar_chart(get_counts("department", fkey, search, v), "department"),
-                use_container_width=True, key="bar_department")
+            st.plotly_chart(hbar_chart(counts["department"], "department"),
+                            use_container_width=True, key="bar_department")
     with right:
         st.caption("Headcount by location")
         with st.container(border=True):
-            st.plotly_chart(
-                hbar_chart(get_counts("location", fkey, search, v), "location"),
-                use_container_width=True, key="bar_location")
+            st.plotly_chart(hbar_chart(counts["location"], "location"),
+                            use_container_width=True, key="bar_location")
 
     # Average salary by department — computed in SQL (repo.aggregate_avg).
     st.caption("Average salary by department")
     with st.container(border=True):
         st.plotly_chart(
-            hbar_chart(get_avg("department", "salary", fkey, search, v),
-                       "department", value="avg", money=True),
+            hbar_chart(data["avg_salary"], "department", value="avg", money=True),
             use_container_width=True, key="bar_avg_salary")
 
-    # Hiring trend over time.
+    # Hiring trend over time — grouped in SQL (repo.joins_by_year).
     st.caption("Joins by year")
     with st.container(border=True):
-        joins = get_joins_by_year(fkey, search, v)
+        joins = data["joins"]
         if not joins.empty:
             st.plotly_chart(area_chart(joins), use_container_width=True,
                             key="area_joins")
