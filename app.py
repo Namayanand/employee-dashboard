@@ -12,6 +12,7 @@ Run:  streamlit run app.py   (generate + seed data first — see README)
 from __future__ import annotations
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 from streamlit_option_menu import option_menu
 
@@ -98,6 +99,15 @@ def get_counts(column: str, fkey: tuple, search: str, _version: int) -> pd.DataF
 
 
 @st.cache_data(show_spinner=False)
+def get_avg(column: str, value_col: str, fkey: tuple, search: str,
+            _version: int) -> pd.DataFrame:
+    with session_scope() as s:
+        rows = repo.aggregate_avg(s, column, value_col,
+                                  filters=dict(fkey), search=search or None)
+    return pd.DataFrame(rows, columns=[column, "avg"])
+
+
+@st.cache_data(show_spinner=False)
 def get_joins_by_year(fkey: tuple, search: str, _version: int) -> pd.DataFrame:
     with session_scope() as s:
         df = repo.query_dataframe(s, filters=dict(fkey), search=search or None,
@@ -162,6 +172,58 @@ def control_bar(show_sort: bool) -> tuple[dict, str, str, str, int]:
 
 
 # --------------------------------------------------------------------------- #
+# Plotly chart builders (interactive: hover tooltips, legends, click-to-toggle)
+# --------------------------------------------------------------------------- #
+PRIMARY = "#68458A"
+# Qualitative palette for categorical slices, harmonised with the purple theme.
+PALETTE = ["#68458A", "#9572B8", "#B39BD0", "#5B6FB5", "#7E57C2",
+           "#C0A9DB", "#4B5FA6", "#8E7CC3", "#D7C7E8", "#3F51B5"]
+
+
+def _style(fig, height: int, legend: bool = False):
+    fig.update_layout(
+        margin=dict(l=8, r=8, t=8, b=8), height=height, showlegend=legend,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2,
+                    xanchor="center", x=0.5, title_text=""),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(size=12),
+    )
+    return fig
+
+
+def donut_chart(df: pd.DataFrame, field: str):
+    """Categorical composition as an interactive donut."""
+    fig = px.pie(df, names=field, values="count", hole=0.55,
+                 color_discrete_sequence=PALETTE)
+    fig.update_traces(
+        textposition="inside", textinfo="percent", sort=False,
+        hovertemplate="%{label}<br>%{value:,} (%{percent})<extra></extra>")
+    return _style(fig, height=260, legend=True)
+
+
+def hbar_chart(df: pd.DataFrame, field: str, value: str = "count",
+               money: bool = False):
+    """Ranked horizontal bar (largest on top)."""
+    df = df.sort_values(value)
+    fig = px.bar(df, x=value, y=field, orientation="h",
+                 color_discrete_sequence=[PRIMARY])
+    tmpl = ("%{y}<br>₹%{x:,.0f}<extra></extra>" if money
+            else "%{y}<br>%{x:,}<extra></extra>")
+    fig.update_traces(hovertemplate=tmpl)
+    fig.update_layout(xaxis_title="", yaxis_title="")
+    return _style(fig, height=max(260, 30 * len(df)))
+
+
+def area_chart(df: pd.DataFrame):
+    """Trend over time as an interactive area/line with markers."""
+    fig = px.area(df, x="year", y="count", markers=True,
+                  color_discrete_sequence=[PRIMARY])
+    fig.update_traces(hovertemplate="%{x}<br>%{y:,} joins<extra></extra>")
+    fig.update_layout(xaxis_title="", yaxis_title="")
+    return _style(fig, height=300)
+
+
+# --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
 def page_overview(fkey: tuple, search: str, v: int):
@@ -180,21 +242,50 @@ def page_overview(fkey: tuple, search: str, v: int):
         return
 
     st.divider()
+
+    # Categorical composition — interactive donuts for low-cardinality fields.
+    st.caption("Workforce composition")
+    donuts = [("status", "By status"),
+              ("employment_type", "By employment type"),
+              ("gender", "By gender")]
+    for col_slot, (field, title) in zip(st.columns(3), donuts):
+        with col_slot:
+            with st.container(border=True):
+                st.caption(title)
+                st.plotly_chart(
+                    donut_chart(get_counts(field, fkey, search, v), field),
+                    use_container_width=True, key=f"donut_{field}")
+
+    # Headcount breakdowns — ranked horizontal bars.
     left, right = st.columns(2)
     with left:
         st.caption("Headcount by department")
         with st.container(border=True):
-            st.bar_chart(get_counts("department", fkey, search, v).set_index("department"),color='#68458A')
+            st.plotly_chart(
+                hbar_chart(get_counts("department", fkey, search, v), "department"),
+                use_container_width=True, key="bar_department")
     with right:
         st.caption("Headcount by location")
         with st.container(border=True):
-            st.bar_chart(get_counts("location", fkey, search, v).set_index("location"),color='#68458A')
+            st.plotly_chart(
+                hbar_chart(get_counts("location", fkey, search, v), "location"),
+                use_container_width=True, key="bar_location")
 
+    # Average salary by department — computed in SQL (repo.aggregate_avg).
+    st.caption("Average salary by department")
+    with st.container(border=True):
+        st.plotly_chart(
+            hbar_chart(get_avg("department", "salary", fkey, search, v),
+                       "department", value="avg", money=True),
+            use_container_width=True, key="bar_avg_salary")
+
+    # Hiring trend over time.
     st.caption("Joins by year")
     with st.container(border=True):
         joins = get_joins_by_year(fkey, search, v)
         if not joins.empty:
-            st.line_chart(joins.set_index("year"),color='#68458A')
+            st.plotly_chart(area_chart(joins), use_container_width=True,
+                            key="area_joins")
 
 
 def page_employees(filters, search, fkey, v, sort_by, sort_dir, page_size):

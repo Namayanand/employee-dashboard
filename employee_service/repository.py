@@ -157,6 +157,25 @@ def aggregate_count(
     return [(r[0], int(r[1])) for r in session.execute(stmt).all()]
 
 
+def aggregate_avg(
+    session: Session,
+    group_by: str,
+    value_col: str,
+    *,
+    filters: Optional[dict] = None,
+    search: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> list[tuple[Any, float]]:
+    """[(value, avg), ...] — average of `value_col` per group, honouring filters."""
+    col = _column(group_by)
+    val = _column(value_col)
+    stmt = _apply_filters(select(col, func.avg(val).label("avg")), filters, search)
+    stmt = stmt.group_by(col).order_by(func.avg(val).desc())
+    if limit:
+        stmt = stmt.limit(limit)
+    return [(r[0], float(r[1] or 0.0)) for r in session.execute(stmt).all()]
+
+
 def summary(
     session: Session,
     *,

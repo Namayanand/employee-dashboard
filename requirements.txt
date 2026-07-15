@@ -15,6 +15,7 @@ psycopg2-binary>=2.9    # Postgres  (Supabase / Railway managed PG)
 # --- UI (prototype) ---
 streamlit>=1.40
 streamlit-option-menu>=0.3.6
+plotly>=5.24           # interactive charts (pie/donut, hover, legends)
 
 # --- dev ---
 pytest>=8.0
