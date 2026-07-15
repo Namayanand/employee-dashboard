@@ -1,0 +1,20 @@
+# --- core ---
+SQLAlchemy>=2.0,<3.0
+pandas>=2.0
+Faker>=24.0
+python-dotenv>=1.0
+
+# --- export formats ---
+openpyxl>=3.1          # .xlsx
+pyarrow>=15.0          # .parquet
+
+# --- optional production DB drivers (uncomment the one you deploy with) ---
+psycopg2-binary>=2.9    # Postgres  (Supabase / Railway managed PG)
+sqlalchemy-libsql>=0.1  # Turso / libSQL (keeps SQLite semantics, hosted)
+
+# --- UI (prototype) ---
+streamlit>=1.40
+streamlit-option-menu>=0.3.6
+
+# --- dev ---
+pytest>=8.0

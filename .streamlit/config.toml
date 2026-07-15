@@ -1,0 +1,12 @@
+[theme]
+# Calm slate-and-indigo console — deliberately not the default Streamlit red,
+# and steering clear of the cream/terracotta AI-default look.
+base = "light"
+primaryColor = "#3F51B5"
+backgroundColor = "#FBFBFD"
+secondaryBackgroundColor = "#F1F2F6"
+textColor = "#1E2233"
+font = "sans serif"
+
+[server]
+runOnSave = true
