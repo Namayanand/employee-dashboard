@@ -6,8 +6,7 @@ The UI is deliberately decoupled and plugs in on top — Streamlit, or a custom
 FastAPI + frontend — without touching any of this code.
 
 > **Live demo:** deployed on **Streamlit Community Cloud**, backed by a
-> **Supabase Postgres** database. _(Add your app URL here:
-> `https://<your-app>.streamlit.app`.)_
+> **Supabase Postgres** database. 
 
 It covers the four project requirements:
 
