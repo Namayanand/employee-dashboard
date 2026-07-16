@@ -66,3 +66,16 @@ def test_list_pagination_and_filter(session):
 def test_invalid_column_rejected(session):
     with pytest.raises(InvalidColumn):
         repo.list_employees(session, sort_by="drop table")
+
+
+def test_next_emp_id_number(session):
+    assert repo.next_emp_id_number(session) == 1  # empty table
+    repo.create_employee(session, _sample("EMP000005"))
+    repo.create_employee(session, _sample("EMP000123"))
+    assert repo.next_emp_id_number(session) == 124  # max suffix + 1
+
+
+def test_next_emp_id_number_ignores_non_numeric(session):
+    repo.create_employee(session, _sample("EMP000010"))
+    repo.create_employee(session, _sample("CUSTOM-XYZ"))  # not EMP######
+    assert repo.next_emp_id_number(session) == 11

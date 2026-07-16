@@ -20,3 +20,7 @@ class TooManyGroups(EmployeeServiceError):
 
 class UnsupportedFormat(EmployeeServiceError):
     """Requested an export format the exporter doesn't support."""
+
+
+class SchemaMismatch(EmployeeServiceError):
+    """An uploaded CSV doesn't conform to the employee schema (missing columns)."""

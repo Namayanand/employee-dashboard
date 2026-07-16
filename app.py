@@ -16,11 +16,12 @@ import plotly.express as px
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from employee_service import config, exporter, repository as repo, splitter
+from employee_service import config, exporter, ingest, repository as repo, splitter
 from employee_service.database import session_scope
 from employee_service.exceptions import (
     EmployeeNotFound,
     EmployeeServiceError,
+    SchemaMismatch,
     TooManyGroups,
 )
 from employee_service.ingest import current_count
@@ -69,9 +70,8 @@ st.markdown(
 FILTER_COLUMNS = ["department", "designation", "employment_type",
                   "status", "location", "gender"]
 SPLIT_DEFAULT = "department"
-PAGES = ["Overview", "Employees", "Manage"]
-BS_ICONS = ["bar-chart-fill", "people-fill", "tools"]   # option_menu (expanded)
-EMOJI = {"Overview": "📊", "Employees": "👥", "Manage": "🛠"}  # buttons (collapsed)
+PAGES = ["Overview", "Employees", "Manage", "Bulk"]
+BS_ICONS = ["bar-chart-fill", "people-fill", "tools", "cloud-upload-fill"]
 
 NAV_STYLES = {
     "container": {"padding": "6px", "background-color": "#F1F2F6",
@@ -428,6 +428,61 @@ def page_manage(v: int):
             _do_write(lambda s: repo.delete_employee(s, emp_id), f"Deleted {emp_id}.")
 
 
+def page_bulk(v: int):
+    st.caption("Upload raw employee CSV files. Rows that conform to the schema are "
+               "loaded into the database; duplicate and invalid rows are skipped.")
+    with st.expander("Required columns (exact header names)", expanded=False):
+        st.code(", ".join(repo.field_columns()))
+        st.caption("Any extra columns are ignored. Every row must fill all required "
+                   "columns; `emp_id` and `email` must be unique.")
+
+    files = st.file_uploader("CSV file(s)", type=["csv"], accept_multiple_files=True,
+                             key="bulk_files")
+    update_existing = st.checkbox(
+        "Update existing employees", key="bulk_update",
+        help="If a row's emp_id already exists, overwrite that employee with the "
+             "uploaded values instead of skipping it (upsert). Off = add-only.")
+    if not st.button("Ingest files", type="primary", disabled=not files, key="bulk_go"):
+        return
+
+    keys = ["received", "added", "updated", "skipped_duplicate", "dropped_invalid"]
+    totals = {k: 0 for k in keys}
+    changed = False
+    for f in files:
+        try:
+            df = pd.read_csv(f)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"**{f.name}** — couldn't read the CSV: {e}")
+            continue
+        try:
+            report = ingest.ingest_dataframe(df, update_existing=update_existing)
+        except SchemaMismatch as e:
+            st.error(f"**{f.name}** — {e}")
+            continue
+        except Exception as e:  # noqa: BLE001
+            st.error(f"**{f.name}** — ingest failed: {e}")
+            continue
+
+        for k in keys:
+            totals[k] += report[k]
+        changed = changed or report["added"] > 0 or report["updated"] > 0
+        st.success(
+            f"**{f.name}** — added {report['added']:,} · "
+            f"updated {report['updated']:,} · "
+            f"skipped {report['skipped_duplicate']:,} duplicate · "
+            f"dropped {report['dropped_invalid']:,} invalid "
+            f"(of {report['received']:,} rows)")
+
+    if len(files) > 1:
+        st.info(f"Total across {len(files)} files — added {totals['added']:,}, "
+                f"updated {totals['updated']:,}, "
+                f"skipped {totals['skipped_duplicate']:,}, "
+                f"dropped {totals['dropped_invalid']:,}.")
+
+    if changed:
+        bump_version()  # refresh KPIs, charts, filter options, and the table
+
+
 def _field_inputs(current: dict, v: int, key_prefix: str) -> dict:
     out: dict = {}
     grid = st.columns(2)
@@ -486,8 +541,8 @@ def main():
     with rail_col:
         selected = option_menu(
             menu_title=None,
-            options=["Overview", "Employees", "Manage"],
-            icons=["bar-chart-fill", "people-fill", "tools"],  # Bootstrap Icons
+            options=PAGES,
+            icons=BS_ICONS,  # Bootstrap Icons
             default_index=0,
             key="nav_menu",
             styles=NAV_STYLES,
@@ -503,7 +558,9 @@ def main():
             page_overview(fkey, search, v)
         elif selected == "Employees":
             page_employees(filters, search, fkey, v, sort_by, sort_dir, page_size)
-        else:
+        elif selected == "Manage":
             page_manage(v)
+        else:
+            page_bulk(v)
 if __name__ == "__main__":
     main()

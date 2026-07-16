@@ -118,6 +118,23 @@ def distinct_values(session: Session, column: str) -> list:
     return [r[0] for r in session.execute(select(col).distinct().order_by(col)).all()]
 
 
+def next_emp_id_number(session: Session) -> int:
+    """The next free emp_id number: the largest numeric suffix among existing
+    ``EMP######`` ids, plus one (1 if the table is empty). Lets an appended batch
+    continue the sequence without colliding on the unique emp_id constraint.
+
+    Parses in Python (rather than CAST in SQL) so a hand-entered, non-numeric
+    emp_id can't break the query across dialects."""
+    best = 0
+    for emp_id in session.scalars(
+        select(Employee.emp_id).where(Employee.emp_id.like("EMP%"))
+    ):
+        suffix = emp_id[3:]
+        if suffix.isdigit():
+            best = max(best, int(suffix))
+    return best + 1
+
+
 def query_dataframe(
     session: Session,
     *,

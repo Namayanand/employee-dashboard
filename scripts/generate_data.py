@@ -83,7 +83,7 @@ def _per_row_choice(rng, choices, prob_rows: np.ndarray) -> np.ndarray:
     return np.asarray(choices)[idx]
 
 
-def build(n: int, seed: int) -> pd.DataFrame:
+def build(n: int, seed: int, start_id: int = 1) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     fake = Faker("en_IN")
     Faker.seed(seed)
@@ -135,7 +135,9 @@ def build(n: int, seed: int) -> pd.DataFrame:
     )
     rating = rng.choice([1, 2, 3, 4, 5], size=n, p=RATING_P)
 
-    idx = np.arange(1, n + 1)
+    # Start emp_ids / email indices at `start_id` so a batch can be appended to an
+    # existing table without colliding on the unique emp_id / email constraints.
+    idx = np.arange(start_id, start_id + n)
     return pd.DataFrame({
         "emp_id": [f"EMP{i:06d}" for i in idx],
         "full_name": np.char.add(np.char.add(first, " "), last),
@@ -159,10 +161,25 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Generate realistic synthetic employee CSV.")
     ap.add_argument("-n", "--rows", type=int, default=200_000)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--start-id", default="1",
+                    help="First emp_id number (e.g. 200001 to append past an "
+                         "existing table). Use 'auto' to continue after the "
+                         "current max emp_id in the database (reads DATABASE_URL).")
     ap.add_argument("-o", "--output", default=str(config.MASTER_CSV))
     args = ap.parse_args()
 
-    df = build(args.rows, args.seed)
+    if str(args.start_id).lower() == "auto":
+        # Look up the next free emp_id from whatever DB DATABASE_URL points at.
+        from employee_service import repository as repo
+        from employee_service.database import session_scope
+        with session_scope() as s:
+            start_id = repo.next_emp_id_number(s)
+        print(f"Auto start-id: continuing at EMP{start_id:06d} "
+              f"({config.DATABASE_URL})")
+    else:
+        start_id = int(args.start_id)
+
+    df = build(args.rows, args.seed, start_id)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
