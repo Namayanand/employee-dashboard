@@ -102,7 +102,7 @@ def filters_key(filters: dict) -> tuple:
 # Cached data access
 # --------------------------------------------------------------------------- #
 @st.cache_data(show_spinner=False)
-def options_for(column: str, _version: int) -> list:
+def options_for(column: str, version: int) -> list:
     with session_scope() as s:
         return repo.distinct_values(s, column)
 
@@ -111,7 +111,7 @@ DONUT_FIELDS = ["status", "employment_type", "gender"]
 
 
 @st.cache_data(show_spinner=False)
-def get_overview_data(fkey: tuple, search: str, _version: int) -> dict:
+def get_overview_data(fkey: tuple, search: str, version: int) -> dict:
     """Every Overview query in a SINGLE database connection (was 8 separate
     round-trips). All aggregation happens in SQL, so nothing pulls raw rows over
     the wire — the joins-by-year trend is grouped in the DB, not in pandas."""
